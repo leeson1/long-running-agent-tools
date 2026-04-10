@@ -1,13 +1,19 @@
 import { useState } from 'react';
-import { Play, Square, MessageSquare, Layers, Clock, List } from 'lucide-react';
+import {
+  Play, Square, MessageSquare, Layers, Clock,
+  List, ScrollText, GitBranch, BarChart3,
+} from 'lucide-react';
 import { useTaskStore } from '../stores/taskStore';
 import { StatusBadge } from './StatusBadge';
 import { ConversationTab } from './ConversationTab';
 import { FeaturesTab } from './FeaturesTab';
 import { SessionsTab } from './SessionsTab';
 import { EventsTab } from './EventsTab';
+import { LogsTab } from './LogsTab';
+import { GitTab } from './GitTab';
+import { StatsTab } from './StatsTab';
 
-type Tab = 'conversation' | 'features' | 'sessions' | 'events';
+type Tab = 'conversation' | 'features' | 'sessions' | 'events' | 'logs' | 'git' | 'stats';
 
 export function TaskDetail() {
   const { tasks, activeTaskId, startTask, stopTask } = useTaskStore();
@@ -31,6 +37,9 @@ export function TaskDetail() {
   const tabs: { key: Tab; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
     { key: 'conversation', label: 'Conversation', icon: MessageSquare },
     { key: 'features', label: 'Features', icon: Layers },
+    { key: 'logs', label: 'Logs', icon: ScrollText },
+    { key: 'git', label: 'Git', icon: GitBranch },
+    { key: 'stats', label: 'Stats', icon: BarChart3 },
     { key: 'sessions', label: 'Sessions', icon: Clock },
     { key: 'events', label: 'Events', icon: List },
   ];
@@ -69,12 +78,12 @@ export function TaskDetail() {
       </div>
 
       {/* Tabs */}
-      <div className="flex border-b border-gray-200 bg-white px-4">
+      <div className="flex border-b border-gray-200 bg-white px-4 overflow-x-auto">
         {tabs.map(({ key, label, icon: Icon }) => (
           <button
             key={key}
             onClick={() => setTab(key)}
-            className={`flex items-center gap-1.5 px-3 py-2 text-sm border-b-2 transition ${
+            className={`flex items-center gap-1.5 px-3 py-2 text-sm border-b-2 transition whitespace-nowrap ${
               tab === key
                 ? 'border-indigo-600 text-indigo-600 font-medium'
                 : 'border-transparent text-gray-500 hover:text-gray-700'
@@ -92,6 +101,17 @@ export function TaskDetail() {
         {tab === 'features' && (
           <div className="h-full overflow-auto p-4">
             <FeaturesTab />
+          </div>
+        )}
+        {tab === 'logs' && <LogsTab />}
+        {tab === 'git' && (
+          <div className="h-full overflow-auto p-4">
+            <GitTab />
+          </div>
+        )}
+        {tab === 'stats' && (
+          <div className="h-full overflow-auto p-4">
+            <StatsTab />
           </div>
         )}
         {tab === 'sessions' && (
