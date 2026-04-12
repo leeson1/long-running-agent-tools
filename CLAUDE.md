@@ -1,4 +1,4 @@
-# long-running-agent-tools - Claude Code 工作规范
+# AgentForge - Claude Code 工作规范
 
 ## 一、提交规范
 
