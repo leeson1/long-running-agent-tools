@@ -96,6 +96,16 @@ function routeEventToConversation(event: WSEvent) {
       break;
     }
 
+    case 'intervention': {
+      convStore.appendMessage(event.task_id, {
+        id: event.id,
+        timestamp: event.timestamp,
+        role: 'system' as MessageRole,
+        content: `✅ Intervention delivered${(data.target_worker as string) ? ` to ${data.target_worker}` : ''}`,
+      });
+      break;
+    }
+
     // feature_update, batch_update, task_status, log 不写入对话流
     default:
       break;
