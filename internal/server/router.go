@@ -10,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
+	"github.com/leeson1/agent-forge/internal/session"
 	"github.com/leeson1/agent-forge/internal/store"
 	"github.com/leeson1/agent-forge/internal/stream"
 )
@@ -22,6 +23,8 @@ type Server struct {
 	taskStore    *store.TaskStore
 	sessionStore *store.SessionStore
 	logStore     *store.LogStore
+	executor     *session.Executor
+	pipeline     *Pipeline
 }
 
 // NewServer 创建 HTTP 服务器
@@ -30,6 +33,7 @@ func NewServer(
 	taskStore *store.TaskStore,
 	sessionStore *store.SessionStore,
 	logStore *store.LogStore,
+	executor *session.Executor,
 ) *Server {
 	hub := NewWSHub(eventBus)
 	go hub.Run()
@@ -40,7 +44,9 @@ func NewServer(
 		taskStore:    taskStore,
 		sessionStore: sessionStore,
 		logStore:     logStore,
+		executor:     executor,
 	}
+	s.pipeline = NewPipeline(executor, taskStore, sessionStore, logStore, eventBus)
 	s.router = s.setupRouter()
 	return s
 }

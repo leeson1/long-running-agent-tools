@@ -13,6 +13,7 @@ import (
 
 	"github.com/leeson1/agent-forge/internal/config"
 	"github.com/leeson1/agent-forge/internal/server"
+	"github.com/leeson1/agent-forge/internal/session"
 	"github.com/leeson1/agent-forge/internal/store"
 	"github.com/leeson1/agent-forge/internal/stream"
 	"github.com/leeson1/agent-forge/internal/task"
@@ -99,7 +100,14 @@ func runServe(cmd *cobra.Command, args []string) error {
 	logStore := store.NewLogStore(baseDir)
 	eventBus := stream.NewEventBus(100)
 
-	srv := server.NewServer(eventBus, taskStore, sessionStore, logStore)
+	// 创建 Claude CLI 执行器
+	execConfig := session.DefaultExecutorConfig()
+	if cfg.CLI.ClaudePath != "" {
+		execConfig.ClaudePath = cfg.CLI.ClaudePath
+	}
+	executor := session.NewExecutor(baseDir, execConfig)
+
+	srv := server.NewServer(eventBus, taskStore, sessionStore, logStore, executor)
 
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
 

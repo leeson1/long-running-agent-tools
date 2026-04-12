@@ -37,8 +37,9 @@ RUN apk add --no-cache \
     ca-certificates \
     && rm -rf /var/cache/apk/*
 
-# Install Node.js (needed for Claude Code CLI)
-RUN apk add --no-cache nodejs npm
+# Install Node.js + Claude Code CLI
+RUN apk add --no-cache nodejs npm && \
+    npm install -g @anthropic-ai/claude-code
 
 # Create app user
 RUN addgroup -g 1000 agentforge && \

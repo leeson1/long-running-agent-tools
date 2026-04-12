@@ -166,7 +166,7 @@ func (s *Server) DeleteTask(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"message": "task deleted"})
 }
 
-// StartTask 启动任务
+// StartTask 启动任务（在后台 goroutine 中执行完整管线）
 func (s *Server) StartTask(w http.ResponseWriter, r *http.Request) {
 	taskID := chi.URLParam(r, "taskID")
 
@@ -176,28 +176,19 @@ func (s *Server) StartTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 从 pending/failed 转为 initializing
-	target := task.StatusInitializing
-	if t.Status == task.StatusFailed {
-		target = task.StatusRunning
-	}
-	if err := t.TransitionTo(target); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+	if t.Status != task.StatusPending && t.Status != task.StatusFailed {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("task cannot be started from status: %s", t.Status))
 		return
 	}
 
-	t.UpdatedAt = time.Now()
-	if err := s.taskStore.Update(t); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
+	// 立即返回响应，管线在后台执行
+	writeJSON(w, http.StatusOK, map[string]string{
+		"message": "task pipeline starting",
+		"task_id": taskID,
+	})
 
-	// 广播状态变更事件
-	s.eventBus.Publish(stream.NewEvent(stream.EventTaskStatus, taskID, map[string]string{
-		"status": string(t.Status),
-	}))
-
-	writeJSON(w, http.StatusOK, t)
+	// 后台启动执行管线
+	go s.pipeline.Run(t)
 }
 
 // StopTask 停止任务

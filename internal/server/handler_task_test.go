@@ -6,7 +6,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
+	"github.com/leeson1/agent-forge/internal/session"
 	"github.com/leeson1/agent-forge/internal/store"
 	"github.com/leeson1/agent-forge/internal/stream"
 	"github.com/leeson1/agent-forge/internal/task"
@@ -19,7 +21,8 @@ func setupTestServer(t *testing.T) *Server {
 	ts := store.NewTaskStore(baseDir)
 	ss := store.NewSessionStore(baseDir)
 	ls := store.NewLogStore(baseDir)
-	return NewServer(eb, ts, ss, ls)
+	exec := session.NewExecutor(baseDir, session.DefaultExecutorConfig())
+	return NewServer(eb, ts, ss, ls, exec)
 }
 
 func TestHealthCheck(t *testing.T) {
@@ -243,7 +246,8 @@ func TestListTasks_WithFilter(t *testing.T) {
 func TestStartTask(t *testing.T) {
 	s := setupTestServer(t)
 
-	body := `{"name":"Startable","config":{"workspace_dir":"/tmp"}}`
+	workDir := t.TempDir()
+	body := `{"name":"Startable","config":{"workspace_dir":"` + workDir + `"}}`
 	req := httptest.NewRequest("POST", "/api/tasks", bytes.NewBufferString(body))
 	w := httptest.NewRecorder()
 	s.Router().ServeHTTP(w, req)
@@ -258,6 +262,9 @@ func TestStartTask(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Errorf("Start status: got %d, want %d", w.Code, http.StatusOK)
 	}
+
+	// 等后台 pipeline goroutine 结束（它会因为找不到 claude CLI 快速失败）
+	time.Sleep(500 * time.Millisecond)
 }
 
 func TestListSessions_Empty(t *testing.T) {

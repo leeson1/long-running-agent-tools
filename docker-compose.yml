@@ -17,6 +17,7 @@ services:
     environment:
       - AGENT_FORGE_HOME=/data/.agent-forge
       - AF_PORT=${AF_PORT:-8080}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/api/health"]
