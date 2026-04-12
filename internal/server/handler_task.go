@@ -166,7 +166,7 @@ func (s *Server) DeleteTask(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"message": "task deleted"})
 }
 
-// StartTask 启动任务（占位）
+// StartTask 启动任务
 func (s *Server) StartTask(w http.ResponseWriter, r *http.Request) {
 	taskID := chi.URLParam(r, "taskID")
 
@@ -176,19 +176,31 @@ func (s *Server) StartTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if t.Status != task.StatusPending && t.Status != task.StatusFailed {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("task cannot be started from status: %s", t.Status))
+	// 从 pending/failed 转为 initializing
+	target := task.StatusInitializing
+	if t.Status == task.StatusFailed {
+		target = task.StatusRunning
+	}
+	if err := t.TransitionTo(target); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	// 实际启动逻辑将在后续 Phase 集成
-	writeJSON(w, http.StatusOK, map[string]string{
-		"message": "task start initiated",
-		"task_id": taskID,
-	})
+	t.UpdatedAt = time.Now()
+	if err := s.taskStore.Update(t); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	// 广播状态变更事件
+	s.eventBus.Publish(stream.NewEvent(stream.EventTaskStatus, taskID, map[string]string{
+		"status": string(t.Status),
+	}))
+
+	writeJSON(w, http.StatusOK, t)
 }
 
-// StopTask 停止任务（占位）
+// StopTask 停止任务
 func (s *Server) StopTask(w http.ResponseWriter, r *http.Request) {
 	taskID := chi.URLParam(r, "taskID")
 
@@ -203,10 +215,22 @@ func (s *Server) StopTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]string{
-		"message": "task stop initiated",
-		"task_id": taskID,
-	})
+	if err := t.TransitionTo(task.StatusCancelled); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	t.UpdatedAt = time.Now()
+	if err := s.taskStore.Update(t); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	s.eventBus.Publish(stream.NewEvent(stream.EventTaskStatus, taskID, map[string]string{
+		"status": string(t.Status),
+	}))
+
+	writeJSON(w, http.StatusOK, t)
 }
 
 // --- Session Handlers ---
