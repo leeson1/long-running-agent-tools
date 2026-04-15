@@ -60,6 +60,11 @@ func (p *Pipeline) Run(t *task.Task) {
 		"message": "Pipeline started",
 	})
 
+	if _, err := session.HeadCommit(t.Config.WorkspaceDir); err != nil {
+		p.failTask(t, fmt.Sprintf("Workspace must be an existing git repository with at least one commit before starting agents: %v", err))
+		return
+	}
+
 	p.broadcastSystem(taskID, "🚀 Starting Initializer Agent...")
 	initializer := agent.NewInitializer(p.executor, p.taskStore, p.sessionStore, p.logStore)
 	initializer.OnEvent = p.makeEventCallback(taskID)

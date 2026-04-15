@@ -48,6 +48,7 @@ func TestTaskStatus_CanTransitionTo(t *testing.T) {
 		valid bool
 	}{
 		{StatusPending, StatusInitializing, true},
+		{StatusPending, StatusFailed, true},
 		{StatusPending, StatusRunning, false},
 		{StatusPending, StatusCancelled, true},
 		{StatusInitializing, StatusPlanning, true},

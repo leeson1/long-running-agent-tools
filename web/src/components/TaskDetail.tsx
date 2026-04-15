@@ -33,6 +33,14 @@ export function TaskDetail() {
     'validating',
   ].includes(task.status);
   const canStart = task.status === 'pending' || task.status === 'failed';
+  const handleStart = () => {
+    const confirmed = window.confirm(
+      'Start AgentForge pipeline?\n\nThis will launch agent CLI processes that inspect and modify the workspace, create git commits, and may run shell commands. This is not a chat session.',
+    );
+    if (confirmed) {
+      startTask(task.id);
+    }
+  };
 
   const tabs: { key: Tab; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
     { key: 'conversation', label: 'Conversation', icon: MessageSquare },
@@ -59,10 +67,10 @@ export function TaskDetail() {
             <StatusBadge status={task.status} />
             {canStart && (
               <button
-                onClick={() => startTask(task.id)}
+                onClick={handleStart}
                 className="flex items-center gap-1 px-3 py-1.5 bg-green-600 text-white rounded-md text-sm hover:bg-green-700 transition"
               >
-                <Play className="w-3.5 h-3.5" /> Start
+                <Play className="w-3.5 h-3.5" /> Run Pipeline
               </button>
             )}
             {isActive && (

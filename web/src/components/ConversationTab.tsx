@@ -6,7 +6,7 @@ import { ToolCallPanel } from './ToolCallPanel';
 import { InterventionInput } from './InterventionInput';
 
 export function ConversationTab() {
-  const { activeTaskId } = useTaskStore();
+  const { activeTaskId, tasks } = useTaskStore();
   const { getMessages, getWorkerIds, activeWorkerFilter, setWorkerFilter } =
     useConversationStore();
 
@@ -16,6 +16,16 @@ export function ConversationTab() {
 
   const messages = activeTaskId ? getMessages(activeTaskId) : [];
   const workerIds = activeTaskId ? getWorkerIds(activeTaskId) : [];
+  const task = tasks.find((t) => t.id === activeTaskId);
+  const isActive = !!task && [
+    'initializing',
+    'planning',
+    'running',
+    'merging',
+    'auto_resolving',
+    'agent_resolving',
+    'validating',
+  ].includes(task.status);
 
   // 自动滚动到底部
   useEffect(() => {
@@ -88,7 +98,11 @@ export function ConversationTab() {
       </div>
 
       {/* 干预输入框 */}
-      <InterventionInput taskId={activeTaskId} workerIds={workerIds} />
+      <div className="px-3 py-2 border-t border-amber-200 bg-amber-50 text-xs text-amber-800">
+        This panel shows agent execution logs. The input below sends an intervention to a running
+        task; it is not a general chat box.
+      </div>
+      <InterventionInput taskId={activeTaskId} workerIds={workerIds} disabled={!isActive} />
     </div>
   );
 }

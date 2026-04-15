@@ -6,19 +6,19 @@ import "time"
 type TaskStatus string
 
 const (
-	StatusPending       TaskStatus = "pending"        // 已创建，等待启动
-	StatusInitializing  TaskStatus = "initializing"   // Initializer Agent 运行中
-	StatusPlanning      TaskStatus = "planning"       // Coordinator 拓扑排序中
-	StatusRunning       TaskStatus = "running"        // Workers 执行中
-	StatusMerging       TaskStatus = "merging"        // 合并分支中
-	StatusAutoResolving TaskStatus = "auto_resolving" // Level 1 自动解决冲突中
+	StatusPending        TaskStatus = "pending"         // 已创建，等待启动
+	StatusInitializing   TaskStatus = "initializing"    // Initializer Agent 运行中
+	StatusPlanning       TaskStatus = "planning"        // Coordinator 拓扑排序中
+	StatusRunning        TaskStatus = "running"         // Workers 执行中
+	StatusMerging        TaskStatus = "merging"         // 合并分支中
+	StatusAutoResolving  TaskStatus = "auto_resolving"  // Level 1 自动解决冲突中
 	StatusAgentResolving TaskStatus = "agent_resolving" // Level 2 Resolver Agent 解决冲突中
-	StatusValidating    TaskStatus = "validating"     // 集成测试验证中
-	StatusConflictWait  TaskStatus = "conflict_wait"  // 等待用户手动解决冲突
-	StatusPaused        TaskStatus = "paused"         // 用户暂停
-	StatusCompleted     TaskStatus = "completed"      // 全部完成
-	StatusFailed        TaskStatus = "failed"         // 失败（可重试）
-	StatusCancelled     TaskStatus = "cancelled"      // 用户取消
+	StatusValidating     TaskStatus = "validating"      // 集成测试验证中
+	StatusConflictWait   TaskStatus = "conflict_wait"   // 等待用户手动解决冲突
+	StatusPaused         TaskStatus = "paused"          // 用户暂停
+	StatusCompleted      TaskStatus = "completed"       // 全部完成
+	StatusFailed         TaskStatus = "failed"          // 失败（可重试）
+	StatusCancelled      TaskStatus = "cancelled"       // 用户取消
 )
 
 // AllStatuses 返回所有有效的任务状态
@@ -44,7 +44,7 @@ func (s TaskStatus) IsActive() bool {
 
 // ValidTransitions 定义合法的状态转换
 var ValidTransitions = map[TaskStatus][]TaskStatus{
-	StatusPending:        {StatusInitializing, StatusCancelled},
+	StatusPending:        {StatusInitializing, StatusFailed, StatusCancelled},
 	StatusInitializing:   {StatusPlanning, StatusFailed, StatusCancelled},
 	StatusPlanning:       {StatusRunning, StatusFailed, StatusCancelled},
 	StatusRunning:        {StatusMerging, StatusPaused, StatusFailed, StatusCancelled, StatusCompleted},

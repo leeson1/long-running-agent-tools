@@ -67,7 +67,8 @@ Create an initial progress file with:
 - Only create the files listed above
 - Do NOT implement any features
 - Do NOT modify any existing project files beyond what's needed for setup
-- Make a git commit with message "Initial setup by AgentForge Initializer"
+- Do NOT initialize a git repository. The workspace must already be a git repository.
+- If the workspace is already a git repository, make a git commit with message "Initial setup by AgentForge Initializer"; otherwise skip committing and report the issue clearly.
 - Focus on accuracy of the feature decomposition and dependency relationships
 `
 
