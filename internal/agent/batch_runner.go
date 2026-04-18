@@ -60,8 +60,8 @@ type BatchRunConfig struct {
 type BatchRunResult struct {
 	BatchNum   int             `json:"batch_num"`
 	Results    []*WorkerResult `json:"results"`
-	Succeeded  []string        `json:"succeeded"`  // 成功的 feature IDs
-	Failed     []string        `json:"failed"`     // 失败的 feature IDs
+	Succeeded  []string        `json:"succeeded"`   // 成功的 feature IDs
+	Failed     []string        `json:"failed"`      // 失败的 feature IDs
 	AllSuccess bool            `json:"all_success"` // 是否全部成功
 }
 
@@ -97,6 +97,18 @@ func (br *BatchRunner) Run(config BatchRunConfig) *BatchRunResult {
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
+			if br.isTaskCancelled(config.TaskID) {
+				wr := &WorkerResult{
+					FeatureID: f.ID,
+					Error:     task.ErrTaskCancelled.Error(),
+				}
+				mu.Lock()
+				result.Results = append(result.Results, wr)
+				result.Failed = append(result.Failed, f.ID)
+				mu.Unlock()
+				return
+			}
+
 			// 创建 worktree
 			wtInfo, err := br.worktreeMgr.Create(config.TaskID, f.ID)
 			if err != nil {
@@ -114,20 +126,20 @@ func (br *BatchRunner) Run(config BatchRunConfig) *BatchRunResult {
 			// 运行 Worker
 			worker := NewWorker(br.executor, br.taskStore, br.sessionStore, br.logStore)
 			worker.OnEvent = br.OnEvent
-				wr := worker.Run(WorkerConfig{
-					TaskID:           config.TaskID,
-					TaskName:         config.TaskName,
-					Feature:          f,
-					BatchNum:         config.BatchNum,
-					SessionNumber:    sn,
-					WorkDir:          wtInfo.Path,
-					ProgressContent:  config.ProgressContent,
-					PendingFeatures:  pendingText,
-					ValidatorCommand: config.ValidatorCmd,
-					Template:         config.Template,
-					Branch:           wtInfo.Branch,
-					BaseCommit:       wtInfo.BaseCommit,
-				})
+			wr := worker.Run(WorkerConfig{
+				TaskID:           config.TaskID,
+				TaskName:         config.TaskName,
+				Feature:          f,
+				BatchNum:         config.BatchNum,
+				SessionNumber:    sn,
+				WorkDir:          wtInfo.Path,
+				ProgressContent:  config.ProgressContent,
+				PendingFeatures:  pendingText,
+				ValidatorCommand: config.ValidatorCmd,
+				Template:         config.Template,
+				Branch:           wtInfo.Branch,
+				BaseCommit:       wtInfo.BaseCommit,
+			})
 
 			mu.Lock()
 			result.Results = append(result.Results, wr)
@@ -154,4 +166,9 @@ func (br *BatchRunner) CleanupWorktrees(taskID string, featureIDs []string) {
 	for _, fid := range featureIDs {
 		_ = br.worktreeMgr.RemoveWithBranch(taskID, fid)
 	}
+}
+
+func (br *BatchRunner) isTaskCancelled(taskID string) bool {
+	stored, err := br.taskStore.Get(taskID)
+	return err == nil && stored.Status == task.StatusCancelled
 }

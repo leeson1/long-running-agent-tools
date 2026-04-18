@@ -242,3 +242,189 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"worker don
 		t.Fatalf("Expected worktrees to be preserved on conflict_wait: %v", err)
 	}
 }
+
+func TestPipeline_RunStopsAfterTaskCancellation(t *testing.T) {
+	mockScript := `#!/bin/bash
+PROMPT="$(cat)"
+if printf '%s' "$PROMPT" | grep -q "Initializer Agent"; then
+  cat > "$PWD/feature_list.json" <<'EOF'
+{"features":[
+  {"id":"F001","category":"functional","description":"Slow feature one","steps":["Wait","Commit"],"depends_on":[],"batch":null,"passes":false},
+  {"id":"F002","category":"functional","description":"Slow feature two","steps":["Wait","Commit"],"depends_on":[],"batch":null,"passes":false}
+]}
+EOF
+  cat > "$PWD/init.sh" <<'EOF'
+#!/bin/bash
+echo init
+EOF
+  chmod +x "$PWD/init.sh"
+  echo "Initialization complete." > "$PWD/progress.txt"
+  echo '{"type":"system","subtype":"init","session_id":"init-session"}'
+  echo '{"type":"result","subtype":"success","is_error":false,"result":"init done","session_id":"init-session","usage":{"input_tokens":1,"output_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}'
+  exit 0
+fi
+
+FEATURE_NAME="$(basename "$PWD")"
+echo '{"type":"system","subtype":"init","session_id":"worker-session"}'
+sleep 30
+echo "$FEATURE_NAME" > "$PWD/$FEATURE_NAME.txt"
+git add "$PWD/$FEATURE_NAME.txt"
+git commit -m "feat: $FEATURE_NAME" >/dev/null
+echo '{"type":"result","subtype":"success","is_error":false,"result":"worker done","session_id":"worker-session","usage":{"input_tokens":1,"output_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}'
+`
+
+	pipeline, tsk, taskStore, _ := setupPipelineTest(t, mockScript)
+	tsk.Config.MaxParallelWorkers = 1
+	if err := taskStore.Update(tsk); err != nil {
+		t.Fatalf("Update task failed: %v", err)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		pipeline.Run(tsk)
+	}()
+
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		latest, err := taskStore.Get(tsk.ID)
+		if err != nil {
+			t.Fatalf("Get task failed: %v", err)
+		}
+		if latest.Status == task.StatusRunning && pipeline.executor.RunningCount() > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("worker session did not start in time")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	latest, err := taskStore.Get(tsk.ID)
+	if err != nil {
+		t.Fatalf("Get task failed: %v", err)
+	}
+	if err := latest.TransitionTo(task.StatusCancelled); err != nil {
+		t.Fatalf("TransitionTo(cancelled) failed: %v", err)
+	}
+	if err := taskStore.Update(latest); err != nil {
+		t.Fatalf("Update cancelled task failed: %v", err)
+	}
+	if err := pipeline.executor.StopTask(tsk.ID); err != nil {
+		t.Fatalf("StopTask failed: %v", err)
+	}
+
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("pipeline did not stop after cancellation")
+	}
+
+	updated, err := taskStore.Get(tsk.ID)
+	if err != nil {
+		t.Fatalf("Get task failed: %v", err)
+	}
+	if updated.Status != task.StatusCancelled {
+		t.Fatalf("Expected cancelled task, got %s", updated.Status)
+	}
+
+	sessions, err := pipeline.sessionStore.List(tsk.ID)
+	if err != nil {
+		t.Fatalf("List sessions failed: %v", err)
+	}
+	if len(sessions) != 2 {
+		t.Fatalf("Expected initializer + one worker session, got %d sessions", len(sessions))
+	}
+}
+
+func TestPipeline_RunCanRetryAfterFailedWorktreePreservation(t *testing.T) {
+	initialScript := `#!/bin/bash
+PROMPT="$(cat)"
+if printf '%s' "$PROMPT" | grep -q "Initializer Agent"; then
+  cat > "$PWD/feature_list.json" <<'EOF'
+{"features":[{"id":"F001","category":"functional","description":"Retry me","steps":["Commit"],"depends_on":[],"batch":null,"passes":false}]}
+EOF
+  cat > "$PWD/init.sh" <<'EOF'
+#!/bin/bash
+echo init
+EOF
+  chmod +x "$PWD/init.sh"
+  echo "Initialization complete." > "$PWD/progress.txt"
+  echo '{"type":"system","subtype":"init","session_id":"init-session"}'
+  echo '{"type":"result","subtype":"success","is_error":false,"result":"init done","session_id":"init-session","usage":{"input_tokens":1,"output_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}'
+  exit 0
+fi
+
+echo '{"type":"system","subtype":"init","session_id":"worker-session"}'
+echo '{"type":"result","subtype":"success","is_error":false,"result":"worker done","session_id":"worker-session","usage":{"input_tokens":1,"output_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}'
+`
+
+	pipeline, tsk, taskStore, repoDir := setupPipelineTest(t, initialScript)
+	pipeline.Run(tsk)
+
+	updated, err := taskStore.Get(tsk.ID)
+	if err != nil {
+		t.Fatalf("Get task failed: %v", err)
+	}
+	if updated.Status != task.StatusFailed {
+		t.Fatalf("Expected failed task after first run, got %s", updated.Status)
+	}
+	if _, err := os.Stat(filepath.Join(repoDir, ".worktrees", tsk.ID, "F001")); err != nil {
+		t.Fatalf("Expected preserved worktree after failure: %v", err)
+	}
+
+	retryScript := filepath.Join(taskStore.PromptsDir(tsk.ID), "..", "..", "..", "mock-claude.sh")
+	_ = retryScript
+	mockScriptPath := pipeline.executor.Config().ClaudePath
+	retryContent := `#!/bin/bash
+PROMPT="$(cat)"
+if printf '%s' "$PROMPT" | grep -q "Initializer Agent"; then
+  cat > "$PWD/feature_list.json" <<'EOF'
+{"features":[{"id":"F001","category":"functional","description":"Retry me","steps":["Commit"],"depends_on":[],"batch":null,"passes":false}]}
+EOF
+  cat > "$PWD/init.sh" <<'EOF'
+#!/bin/bash
+echo init
+EOF
+  chmod +x "$PWD/init.sh"
+  echo "Initialization complete." > "$PWD/progress.txt"
+  echo '{"type":"system","subtype":"init","session_id":"init-session"}'
+  echo '{"type":"result","subtype":"success","is_error":false,"result":"init done","session_id":"init-session","usage":{"input_tokens":1,"output_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}'
+  exit 0
+fi
+
+FEATURE_NAME="$(basename "$PWD")"
+echo "$FEATURE_NAME" > "$PWD/$FEATURE_NAME.txt"
+git add "$PWD/$FEATURE_NAME.txt"
+git commit -m "feat: $FEATURE_NAME" >/dev/null
+echo '{"type":"system","subtype":"init","session_id":"worker-session"}'
+echo '{"type":"result","subtype":"success","is_error":false,"result":"worker done","session_id":"worker-session","usage":{"input_tokens":1,"output_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}'
+`
+	if err := os.WriteFile(mockScriptPath, []byte(retryContent), 0755); err != nil {
+		t.Fatalf("rewrite mock script failed: %v", err)
+	}
+
+	retryTask, err := taskStore.Get(tsk.ID)
+	if err != nil {
+		t.Fatalf("Get task for retry failed: %v", err)
+	}
+	if err := retryTask.TransitionTo(task.StatusInitializing); err != nil {
+		t.Fatalf("TransitionTo(initializing) failed: %v", err)
+	}
+	if err := taskStore.Update(retryTask); err != nil {
+		t.Fatalf("Update retry task failed: %v", err)
+	}
+
+	pipeline.Run(retryTask)
+
+	retried, err := taskStore.Get(tsk.ID)
+	if err != nil {
+		t.Fatalf("Get retried task failed: %v", err)
+	}
+	if retried.Status != task.StatusCompleted {
+		t.Fatalf("Expected completed task after retry, got %s", retried.Status)
+	}
+	if _, err := os.Stat(filepath.Join(repoDir, "F001.txt")); err != nil {
+		t.Fatalf("Expected merged feature file after retry: %v", err)
+	}
+}

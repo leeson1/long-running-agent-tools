@@ -1,6 +1,7 @@
 package session
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -21,9 +22,9 @@ func NewWorktreeManager(repoDir string) *WorktreeManager {
 
 // WorktreeInfo worktree 信息
 type WorktreeInfo struct {
-	Path      string // worktree 路径
-	Branch    string // 分支名
-	FeatureID string // 关联的 feature ID
+	Path       string // worktree 路径
+	Branch     string // 分支名
+	FeatureID  string // 关联的 feature ID
 	BaseCommit string // 创建 worktree 时的 HEAD commit
 }
 
@@ -52,9 +53,9 @@ func (wm *WorktreeManager) Create(taskID, featureID string) (*WorktreeInfo, erro
 	}
 
 	return &WorktreeInfo{
-		Path:      wtPath,
-		Branch:    branch,
-		FeatureID: featureID,
+		Path:       wtPath,
+		Branch:     branch,
+		FeatureID:  featureID,
 		BaseCommit: baseCommit,
 	}, nil
 }
@@ -113,6 +114,56 @@ func (wm *WorktreeManager) Prune() error {
 		return fmt.Errorf("git worktree prune failed: %s: %w", strings.TrimSpace(string(output)), err)
 	}
 	return nil
+}
+
+// ResetTask removes preserved worktrees and branches for a task before a retry.
+func (wm *WorktreeManager) ResetTask(taskID string) error {
+	if err := wm.Prune(); err != nil {
+		return err
+	}
+
+	taskDir := filepath.Join(wm.repoDir, ".worktrees", taskID)
+	entries, err := os.ReadDir(taskDir)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("read task worktrees: %w", err)
+	}
+
+	var errs []error
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		if err := wm.RemoveWithBranch(taskID, entry.Name()); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if err := wm.deleteTaskBranches(taskID); err != nil {
+		errs = append(errs, err)
+	}
+	return errors.Join(errs...)
+}
+
+func (wm *WorktreeManager) deleteTaskBranches(taskID string) error {
+	cmd := exec.Command("git", "for-each-ref", "--format=%(refname:short)", "refs/heads/agentforge/"+taskID)
+	cmd.Dir = wm.repoDir
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("list task branches failed: %s: %w", strings.TrimSpace(string(output)), err)
+	}
+
+	var errs []error
+	for _, branch := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+		branch = strings.TrimSpace(branch)
+		if branch == "" {
+			continue
+		}
+		cmd := exec.Command("git", "branch", "-D", branch)
+		cmd.Dir = wm.repoDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			errs = append(errs, fmt.Errorf("delete branch %s failed: %s: %w", branch, strings.TrimSpace(string(out)), err))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // parseWorktreeList 解析 git worktree list --porcelain 输出

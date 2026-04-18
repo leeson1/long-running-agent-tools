@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -65,6 +66,7 @@ type runningProcess struct {
 	taskID    string
 	startedAt time.Time
 	done      chan struct{} // 进程结束信号
+	stopped   atomic.Bool
 }
 
 // NewExecutor 创建执行器
@@ -235,7 +237,12 @@ func (e *Executor) Start(sess *Session, prompt string, handler EventHandler) err
 		now := time.Now()
 		sess.EndedAt = &now
 
-		if ctx.Err() == context.DeadlineExceeded {
+		if proc.stopped.Load() {
+			sess.Status = SessionCancelled
+			if sess.Result.ErrorMessage == "" {
+				sess.Result.ErrorMessage = "session cancelled"
+			}
+		} else if ctx.Err() == context.DeadlineExceeded {
 			sess.Status = SessionTimeout
 			sess.Result.ErrorMessage = "session timed out"
 		} else if err != nil {
@@ -261,6 +268,8 @@ func (e *Executor) Stop(sessionID string) error {
 		return fmt.Errorf("session %s is not running", sessionID)
 	}
 
+	proc.stopped.Store(true)
+
 	// 先尝试优雅终止（发送 SIGINT 到进程组）
 	if proc.cmd.Process != nil {
 		_ = syscall.Kill(-proc.cmd.Process.Pid, syscall.SIGINT)
@@ -275,6 +284,27 @@ func (e *Executor) Stop(sessionID string) error {
 		<-proc.done
 		return nil
 	}
+}
+
+// StopTask stops all running sessions that belong to the specified task.
+func (e *Executor) StopTask(taskID string) error {
+	e.mu.RLock()
+	sessionIDs := make([]string, 0, len(e.procs))
+	for sessionID, proc := range e.procs {
+		if proc.taskID == taskID {
+			sessionIDs = append(sessionIDs, sessionID)
+		}
+	}
+	e.mu.RUnlock()
+
+	var errs []error
+	for _, sessionID := range sessionIDs {
+		if err := e.Stop(sessionID); err != nil {
+			errs = append(errs, err)
+		}
+	}
+
+	return errors.Join(errs...)
 }
 
 // IsRunning 检查会话是否正在运行

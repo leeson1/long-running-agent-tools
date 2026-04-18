@@ -243,6 +243,10 @@ func (s *Server) StopTask(w http.ResponseWriter, r *http.Request) {
 		"status": string(t.Status),
 	}))
 
+	go func() {
+		_ = s.executor.StopTask(taskID)
+	}()
+
 	writeJSON(w, http.StatusOK, t)
 }
 

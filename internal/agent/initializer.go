@@ -52,6 +52,10 @@ type InitResult struct {
 // 4. 验证产出物（feature_list.json, init.sh, progress.txt）
 // 5. 保存结果，状态转换：initializing → planning
 func (init *Initializer) Run(t *task.Task, tmpl *template.Template) (*InitResult, error) {
+	if init.isTaskCancelled(t.ID) {
+		return &InitResult{Error: task.ErrTaskCancelled.Error()}, task.ErrTaskCancelled
+	}
+
 	// 1. 状态转换：pending → initializing
 	if t.Status != task.StatusInitializing {
 		if err := t.TransitionTo(task.StatusInitializing); err != nil {
@@ -74,6 +78,13 @@ func (init *Initializer) Run(t *task.Task, tmpl *template.Template) (*InitResult
 
 	if err := init.sessionStore.Save(sess); err != nil {
 		return nil, fmt.Errorf("failed to save session: %w", err)
+	}
+
+	if init.isTaskCancelled(t.ID) {
+		return &InitResult{
+			Session: sess,
+			Error:   task.ErrTaskCancelled.Error(),
+		}, task.ErrTaskCancelled
 	}
 
 	// 5. 启动 Executor，收集事件
@@ -112,6 +123,12 @@ func (init *Initializer) Run(t *task.Task, tmpl *template.Template) (*InitResult
 	_ = init.sessionStore.Save(sess)
 
 	// 8. 检查执行结果
+	if sess.Status == session.SessionCancelled {
+		return &InitResult{
+			Session: sess,
+			Error:   task.ErrTaskCancelled.Error(),
+		}, task.ErrTaskCancelled
+	}
 	if sess.Status == session.SessionFailed || sess.Status == session.SessionTimeout {
 		result := &InitResult{
 			Session: sess,
@@ -159,6 +176,11 @@ func (init *Initializer) Run(t *task.Task, tmpl *template.Template) (*InitResult
 		FeatureList:     featureList,
 		ProgressContent: progressContent,
 	}, nil
+}
+
+func (init *Initializer) isTaskCancelled(taskID string) bool {
+	stored, err := init.taskStore.Get(taskID)
+	return err == nil && stored.Status == task.StatusCancelled
 }
 
 // buildPrompt 构建 Initializer Agent 的 prompt

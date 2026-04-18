@@ -60,7 +60,9 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
 
   updateTaskInList: (task) => {
     set((s) => ({
-      tasks: s.tasks.map((t) => (t.id === task.id ? task : t)),
+      tasks: s.tasks.some((t) => t.id === task.id)
+        ? s.tasks.map((t) => (t.id === task.id ? task : t))
+        : [task, ...s.tasks],
     }));
   },
 }));

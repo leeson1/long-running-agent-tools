@@ -86,10 +86,10 @@ type ResolveConfig struct {
 
 // ResolveResult 解决结果
 type ResolveResult struct {
-	Session  *session.Session `json:"session"`
-	Success  bool             `json:"success"`
-	Retries  int              `json:"retries"`
-	Error    string           `json:"error,omitempty"`
+	Session *session.Session `json:"session"`
+	Success bool             `json:"success"`
+	Retries int              `json:"retries"`
+	Error   string           `json:"error,omitempty"`
 }
 
 // Resolve 启动 Resolver Agent 解决冲突
@@ -114,6 +114,11 @@ func (r *Resolver) Resolve(config ResolveConfig) *ResolveResult {
 
 // attemptResolve 单次尝试解决冲突
 func (r *Resolver) attemptResolve(config ResolveConfig, attempt int) *ResolveResult {
+	if r.isTaskCancelled(config.TaskID) {
+		_ = r.merger.AbortMerge()
+		return &ResolveResult{Error: task.ErrTaskCancelled.Error()}
+	}
+
 	// 1. 构建 prompt
 	prompt := r.buildPrompt(config)
 
@@ -140,6 +145,14 @@ func (r *Resolver) attemptResolve(config ResolveConfig, attempt int) *ResolveRes
 		return &ResolveResult{
 			Session: sess,
 			Error:   fmt.Sprintf("merge failed without conflict: %s", mergeResult.ErrorMessage),
+		}
+	}
+
+	if r.isTaskCancelled(config.TaskID) {
+		_ = r.merger.AbortMerge()
+		return &ResolveResult{
+			Session: sess,
+			Error:   task.ErrTaskCancelled.Error(),
 		}
 	}
 
@@ -173,6 +186,13 @@ func (r *Resolver) attemptResolve(config ResolveConfig, attempt int) *ResolveRes
 	_ = r.sessionStore.Save(sess)
 
 	// 6. 检查结果
+	if sess.Status == session.SessionCancelled {
+		r.merger.AbortMerge()
+		return &ResolveResult{
+			Session: sess,
+			Error:   task.ErrTaskCancelled.Error(),
+		}
+	}
 	if sess.Status == session.SessionFailed || sess.Status == session.SessionTimeout {
 		r.merger.AbortMerge()
 		return &ResolveResult{
@@ -197,6 +217,11 @@ func (r *Resolver) attemptResolve(config ResolveConfig, attempt int) *ResolveRes
 	}
 }
 
+func (r *Resolver) isTaskCancelled(taskID string) bool {
+	stored, err := r.taskStore.Get(taskID)
+	return err == nil && stored.Status == task.StatusCancelled
+}
+
 // buildPrompt 构建 Resolver prompt
 func (r *Resolver) buildPrompt(config ResolveConfig) string {
 	conflictFilesStr := strings.Join(config.ConflictFiles, "\n")
@@ -218,7 +243,7 @@ func (r *Resolver) buildPrompt(config ResolveConfig) string {
 		"feature_id":        config.Feature.ID,
 		"conflict_files":    conflictFilesStr,
 		"conflict_diffs":    conflictDiffsStr,
-		"validator_command":  validatorCmd,
+		"validator_command": validatorCmd,
 	}
 	return template.RenderPrompt(DefaultResolverPrompt, vars)
 }

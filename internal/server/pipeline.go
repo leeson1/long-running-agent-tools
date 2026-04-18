@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -51,6 +52,11 @@ func (p *Pipeline) Run(t *task.Task) {
 	taskID := t.ID
 	tmpl := p.resolveTemplate(t.Template)
 
+	if err := p.checkCancelled(t); err != nil {
+		p.cancelTask(t, "⏹ Task cancelled.")
+		return
+	}
+
 	if tmpl.Config.ID != t.Template && t.Template != "" && t.Template != "default" {
 		p.broadcastSystem(taskID, fmt.Sprintf("ℹ️ Template %q not found. Falling back to %q.", t.Template, tmpl.Config.ID))
 	}
@@ -70,7 +76,15 @@ func (p *Pipeline) Run(t *task.Task) {
 	initializer.OnEvent = p.makeEventCallback(taskID)
 	initResult, err := initializer.Run(t, tmpl)
 	if err != nil {
+		if p.isCancellationError(t, err) {
+			p.cancelTask(t, "⏹ Task cancelled.")
+			return
+		}
 		p.failTask(t, fmt.Sprintf("Initializer failed: %v", err))
+		return
+	}
+	if err := p.checkCancelled(t); err != nil {
+		p.cancelTask(t, "⏹ Task cancelled.")
 		return
 	}
 
@@ -95,8 +109,16 @@ func (p *Pipeline) Run(t *task.Task) {
 		p.failTask(t, fmt.Sprintf("Failed to persist initial task state: %v", err))
 		return
 	}
+	if err := p.checkCancelled(t); err != nil {
+		p.cancelTask(t, "⏹ Task cancelled.")
+		return
+	}
 
 	if err := p.transitionTask(t, task.StatusRunning, "📦 Scheduled batches. Starting execution..."); err != nil {
+		if p.isCancellationError(t, err) {
+			p.cancelTask(t, "⏹ Task cancelled.")
+			return
+		}
 		p.failTask(t, fmt.Sprintf("Failed to transition task to running: %v", err))
 		return
 	}
@@ -111,6 +133,10 @@ func (p *Pipeline) Run(t *task.Task) {
 	})
 
 	worktreeMgr := session.NewWorktreeManager(t.Config.WorkspaceDir)
+	if err := worktreeMgr.ResetTask(taskID); err != nil {
+		p.failTask(t, fmt.Sprintf("Failed to reset preserved worktrees: %v", err))
+		return
+	}
 	merger := session.NewMerger(t.Config.WorkspaceDir)
 	resolver := agent.NewResolver(p.executor, p.taskStore, p.sessionStore, p.logStore, merger, 2)
 
@@ -121,6 +147,10 @@ func (p *Pipeline) Run(t *task.Task) {
 	batchRunner.OnEvent = p.makeEventCallback(taskID)
 
 	for !batchMgr.IsAllCompleted() {
+		if err := p.checkCancelled(t); err != nil {
+			p.cancelTask(t, "⏹ Task cancelled.")
+			return
+		}
 		batchNum := batchMgr.CurrentBatch()
 		featureIDs, err := batchMgr.GetCurrentBatchFeatures()
 		if err != nil {
@@ -163,6 +193,10 @@ func (p *Pipeline) Run(t *task.Task) {
 			ValidatorCmd:    p.validatorCommandLabel(tmpl),
 			Template:        tmpl,
 		})
+		if err := p.checkCancelled(t); err != nil {
+			p.cancelTask(t, "⏹ Task cancelled.")
+			return
+		}
 
 		t.Progress.TotalSessions += len(batchResult.Results)
 		for _, wr := range batchResult.Results {
@@ -172,6 +206,10 @@ func (p *Pipeline) Run(t *task.Task) {
 		}
 		if err := p.taskStore.Update(t); err != nil {
 			p.failTask(t, fmt.Sprintf("Failed to persist session stats: %v", err))
+			return
+		}
+		if err := p.checkCancelled(t); err != nil {
+			p.cancelTask(t, "⏹ Task cancelled.")
 			return
 		}
 
@@ -188,12 +226,20 @@ func (p *Pipeline) Run(t *task.Task) {
 		}
 
 		if err := p.transitionTask(t, task.StatusMerging, fmt.Sprintf("🔀 Merging Batch %d into the main workspace...", batchNum+1)); err != nil {
+			if p.isCancellationError(t, err) {
+				p.cancelTask(t, "⏹ Task cancelled.")
+				return
+			}
 			p.failTask(t, fmt.Sprintf("Failed to enter merging state: %v", err))
 			return
 		}
 
 		mergedIDs, err := p.mergeBatch(t, tmpl, batchNum, featureIDs, batchResult.Results, merger, resolver)
 		if err != nil {
+			if p.isCancellationError(t, err) {
+				p.cancelTask(t, "⏹ Task cancelled.")
+				return
+			}
 			if t.Status == task.StatusConflictWait {
 				batchMgr.FailCurrentBatch(err.Error())
 				return
@@ -204,12 +250,20 @@ func (p *Pipeline) Run(t *task.Task) {
 		}
 
 		if err := p.transitionTask(t, task.StatusValidating, fmt.Sprintf("🧪 Validating merged result for Batch %d...", batchNum+1)); err != nil {
+			if p.isCancellationError(t, err) {
+				p.cancelTask(t, "⏹ Task cancelled.")
+				return
+			}
 			p.failTask(t, fmt.Sprintf("Failed to enter validating state: %v", err))
 			return
 		}
 		if err := p.runMainValidator(t, tmpl, batchNum); err != nil {
 			batchMgr.FailCurrentBatch(err.Error())
 			p.failTask(t, fmt.Sprintf("Batch %d validation failed after merge: %v", batchNum+1, err))
+			return
+		}
+		if err := p.checkCancelled(t); err != nil {
+			p.cancelTask(t, "⏹ Task cancelled.")
 			return
 		}
 
@@ -242,12 +296,24 @@ func (p *Pipeline) Run(t *task.Task) {
 			return
 		}
 		if err := p.transitionTask(t, task.StatusRunning, fmt.Sprintf("➡️ Moving to Batch %d...", batchMgr.CurrentBatch()+1)); err != nil {
+			if p.isCancellationError(t, err) {
+				p.cancelTask(t, "⏹ Task cancelled.")
+				return
+			}
 			p.failTask(t, fmt.Sprintf("Failed to resume running state: %v", err))
 			return
 		}
 	}
 
+	if err := p.checkCancelled(t); err != nil {
+		p.cancelTask(t, "⏹ Task cancelled.")
+		return
+	}
 	if err := p.transitionTask(t, task.StatusCompleted, "🎉 Task completed successfully."); err != nil {
+		if p.isCancellationError(t, err) {
+			p.cancelTask(t, "⏹ Task cancelled.")
+			return
+		}
 		p.failTask(t, fmt.Sprintf("Failed to mark task complete: %v", err))
 		return
 	}
@@ -274,6 +340,9 @@ func (p *Pipeline) mergeBatch(
 
 	mergedIDs := make([]string, 0, len(orderedFeatureIDs))
 	for _, fid := range orderedFeatureIDs {
+		if err := p.checkCancelled(t); err != nil {
+			return mergedIDs, err
+		}
 		result := resultByFeature[fid]
 		if result == nil {
 			return mergedIDs, fmt.Errorf("missing worker result for feature %s", fid)
@@ -330,6 +399,9 @@ func (p *Pipeline) mergeBatch(
 		if resolveResult.Success {
 			mergedIDs = append(mergedIDs, fid)
 			continue
+		}
+		if err := p.checkCancelled(t); err != nil {
+			return mergedIDs, err
 		}
 
 		if err := merger.AbortMerge(); err != nil {
@@ -447,6 +519,11 @@ func (p *Pipeline) validatorCommandLabel(tmpl *template.Template) string {
 }
 
 func (p *Pipeline) transitionTask(t *task.Task, status task.TaskStatus, message string) error {
+	if status != task.StatusCancelled {
+		if err := p.checkCancelled(t); err != nil {
+			return err
+		}
+	}
 	if t.Status != status {
 		if err := t.TransitionTo(status); err != nil {
 			return err
@@ -476,6 +553,41 @@ func (p *Pipeline) failTask(t *task.Task, message string) {
 	p.broadcastSystem(t.ID, "❌ "+message)
 	p.broadcast(t.ID, stream.EventTaskStatus, map[string]string{
 		"status":  string(t.Status),
+		"message": message,
+	})
+}
+
+func (p *Pipeline) checkCancelled(t *task.Task) error {
+	stored, err := p.taskStore.Get(t.ID)
+	if err != nil {
+		return nil
+	}
+	if stored.Status == task.StatusCancelled {
+		t.Status = stored.Status
+		t.UpdatedAt = stored.UpdatedAt
+		return task.ErrTaskCancelled
+	}
+	return nil
+}
+
+func (p *Pipeline) isCancellationError(t *task.Task, err error) bool {
+	if errors.Is(err, task.ErrTaskCancelled) {
+		return true
+	}
+	return err != nil && errors.Is(p.checkCancelled(t), task.ErrTaskCancelled)
+}
+
+func (p *Pipeline) cancelTask(t *task.Task, message string) {
+	if t.Status != task.StatusCancelled && t.Status.CanTransitionTo(task.StatusCancelled) {
+		if err := t.TransitionTo(task.StatusCancelled); err == nil {
+			_ = p.taskStore.Update(t)
+		}
+	}
+	if message != "" {
+		p.broadcastSystem(t.ID, message)
+	}
+	p.broadcast(t.ID, stream.EventTaskStatus, map[string]string{
+		"status":  string(task.StatusCancelled),
 		"message": message,
 	})
 }

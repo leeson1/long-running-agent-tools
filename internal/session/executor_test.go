@@ -215,6 +215,54 @@ echo '{"type":"result","subtype":"success","is_error":false,"session_id":"long-s
 	if exec.IsRunning("long-session") {
 		t.Error("Session should not be running after Stop")
 	}
+	if sess.Status != SessionCancelled {
+		t.Fatalf("Session status: got %s, want %s", sess.Status, SessionCancelled)
+	}
+}
+
+func TestExecutor_StopTask(t *testing.T) {
+	tmpDir := t.TempDir()
+	workDir := t.TempDir()
+
+	mockScript := filepath.Join(tmpDir, "mock-claude-stop-task.sh")
+	scriptContent := `#!/bin/bash
+cat > /dev/null
+echo '{"type":"system","subtype":"init","session_id":"task-session"}'
+sleep 30
+`
+	if err := os.WriteFile(mockScript, []byte(scriptContent), 0755); err != nil {
+		t.Fatalf("failed to write mock script: %v", err)
+	}
+
+	exec := NewExecutor(tmpDir, ExecutorConfig{
+		ClaudePath: mockScript,
+		Timeout:    30 * time.Second,
+	})
+
+	sess1 := NewSession("task-session-1", "task-a", TypeWorker, workDir)
+	sess2 := NewSession("task-session-2", "task-b", TypeWorker, workDir)
+	if err := exec.Start(sess1, "test", nil); err != nil {
+		t.Fatalf("Start sess1 failed: %v", err)
+	}
+	if err := exec.Start(sess2, "test", nil); err != nil {
+		t.Fatalf("Start sess2 failed: %v", err)
+	}
+
+	time.Sleep(200 * time.Millisecond)
+
+	if err := exec.StopTask("task-a"); err != nil {
+		t.Fatalf("StopTask failed: %v", err)
+	}
+	if sess1.Status != SessionCancelled {
+		t.Fatalf("sess1 status: got %s, want %s", sess1.Status, SessionCancelled)
+	}
+	if !exec.IsRunning("task-session-2") {
+		t.Fatal("sess2 should still be running")
+	}
+
+	if err := exec.Stop("task-session-2"); err != nil {
+		t.Fatalf("Stop sess2 failed: %v", err)
+	}
 }
 
 func TestExecutor_Timeout(t *testing.T) {

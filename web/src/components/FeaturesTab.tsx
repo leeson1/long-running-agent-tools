@@ -7,6 +7,7 @@ import {
   AlertTriangle,
 } from 'lucide-react';
 import { useTaskStore } from '../stores/taskStore';
+import { useWSStore } from '../stores/wsStore';
 import { api, type Feature, type FeatureList } from '../lib/api';
 
 /** Feature 状态图标 */
@@ -27,11 +28,17 @@ function featureStatusLabel(f: Feature, runningIds: Set<string>, failedIds: Set<
 
 export function FeaturesTab() {
   const { tasks, activeTaskId } = useTaskStore();
+  const { events } = useWSStore();
   const [features, setFeatures] = useState<FeatureList | null>(null);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
 
   const task = tasks.find((t) => t.id === activeTaskId);
+  const refreshKey = events.filter(
+    (event) =>
+      event.task_id === activeTaskId &&
+      (event.type === 'feature_update' || event.type === 'batch_update' || event.type === 'task_status')
+  ).length;
 
   useEffect(() => {
     if (!activeTaskId) return;
@@ -41,7 +48,7 @@ export function FeaturesTab() {
       .then(setFeatures)
       .catch(() => setFeatures(null))
       .finally(() => setLoading(false));
-  }, [activeTaskId]);
+  }, [activeTaskId, refreshKey]);
 
   if (!task || !activeTaskId) return null;
 

@@ -29,12 +29,12 @@ func (m *Merger) GetRemainingConflicts() []string {
 
 // MergeResult 单次合并结果
 type MergeResult struct {
-	FeatureID      string   `json:"feature_id"`
-	Branch         string   `json:"branch"`
-	Success        bool     `json:"success"`
-	HasConflict    bool     `json:"has_conflict"`
-	ConflictFiles  []string `json:"conflict_files,omitempty"`
-	ErrorMessage   string   `json:"error_message,omitempty"`
+	FeatureID     string   `json:"feature_id"`
+	Branch        string   `json:"branch"`
+	Success       bool     `json:"success"`
+	HasConflict   bool     `json:"has_conflict"`
+	ConflictFiles []string `json:"conflict_files,omitempty"`
+	ErrorMessage  string   `json:"error_message,omitempty"`
 }
 
 // BatchMergeResult 批量合并结果
@@ -139,24 +139,27 @@ func (m *Merger) AutoResolveConflict(branch, featureID string) *MergeResult {
 		Branch:    branch,
 	}
 
-	// 先尝试 merge
-	cmd := exec.Command("git", "merge", "--no-edit", branch)
-	cmd.Dir = m.repoDir
-	output, err := cmd.CombinedOutput()
-
-	if err == nil {
-		result.Success = true
-		return result
-	}
-
-	if !strings.Contains(string(output), "CONFLICT") {
-		result.ErrorMessage = strings.TrimSpace(string(output))
-		m.AbortMerge()
-		return result
-	}
-
-	// 获取冲突文件
 	conflictFiles := m.getConflictFiles()
+	if len(conflictFiles) == 0 {
+		// 当前没有活动冲突时，先触发一次 merge。
+		cmd := exec.Command("git", "merge", "--no-edit", branch)
+		cmd.Dir = m.repoDir
+		output, err := cmd.CombinedOutput()
+
+		if err == nil {
+			result.Success = true
+			return result
+		}
+
+		if !strings.Contains(string(output), "CONFLICT") {
+			result.ErrorMessage = strings.TrimSpace(string(output))
+			m.AbortMerge()
+			return result
+		}
+
+		conflictFiles = m.getConflictFiles()
+	}
+
 	result.ConflictFiles = conflictFiles
 
 	if len(conflictFiles) == 0 {
@@ -225,9 +228,9 @@ func (m *Merger) commitMerge(message string) error {
 
 // ConflictDetail 冲突详情（供 UI 展示和 Resolver Agent 使用）
 type ConflictDetail struct {
-	FeatureID     string   `json:"feature_id"`
-	Branch        string   `json:"branch"`
-	ConflictFiles []string `json:"conflict_files"`
+	FeatureID     string            `json:"feature_id"`
+	Branch        string            `json:"branch"`
+	ConflictFiles []string          `json:"conflict_files"`
 	FileDiffs     map[string]string `json:"file_diffs"` // 文件名 -> diff 内容
 }
 

@@ -66,6 +66,16 @@ type WorkerResult struct {
 
 // Run 执行 Worker 流程
 func (w *Worker) Run(config WorkerConfig) *WorkerResult {
+	if w.isTaskCancelled(config.TaskID) {
+		return &WorkerResult{
+			FeatureID:  config.Feature.ID,
+			Branch:     config.Branch,
+			WorkDir:    config.WorkDir,
+			BaseCommit: config.BaseCommit,
+			Error:      task.ErrTaskCancelled.Error(),
+		}
+	}
+
 	// 1. 构建 prompt
 	prompt := w.buildPrompt(config)
 
@@ -81,12 +91,23 @@ func (w *Worker) Run(config WorkerConfig) *WorkerResult {
 
 	if err := w.sessionStore.Save(sess); err != nil {
 		return &WorkerResult{
-			Session:   sess,
-			FeatureID: config.Feature.ID,
-			Branch:    config.Branch,
-			WorkDir:   config.WorkDir,
+			Session:    sess,
+			FeatureID:  config.Feature.ID,
+			Branch:     config.Branch,
+			WorkDir:    config.WorkDir,
 			BaseCommit: config.BaseCommit,
-			Error:     fmt.Sprintf("failed to save session: %v", err),
+			Error:      fmt.Sprintf("failed to save session: %v", err),
+		}
+	}
+
+	if w.isTaskCancelled(config.TaskID) {
+		return &WorkerResult{
+			Session:    sess,
+			FeatureID:  config.Feature.ID,
+			Branch:     config.Branch,
+			WorkDir:    config.WorkDir,
+			BaseCommit: config.BaseCommit,
+			Error:      task.ErrTaskCancelled.Error(),
 		}
 	}
 
@@ -148,12 +169,12 @@ func (w *Worker) Run(config WorkerConfig) *WorkerResult {
 
 	if err := w.executor.Start(sess, prompt, handler); err != nil {
 		return &WorkerResult{
-			Session:   sess,
-			FeatureID: config.Feature.ID,
-			Branch:    config.Branch,
-			WorkDir:   config.WorkDir,
+			Session:    sess,
+			FeatureID:  config.Feature.ID,
+			Branch:     config.Branch,
+			WorkDir:    config.WorkDir,
 			BaseCommit: config.BaseCommit,
-			Error:     fmt.Sprintf("failed to start worker session: %v", err),
+			Error:      fmt.Sprintf("failed to start worker session: %v", err),
 		}
 	}
 
@@ -164,14 +185,24 @@ func (w *Worker) Run(config WorkerConfig) *WorkerResult {
 	_ = w.sessionStore.Save(sess)
 
 	// 7. 判断 Claude 进程结果
+	if sess.Status == session.SessionCancelled {
+		return &WorkerResult{
+			Session:    sess,
+			FeatureID:  config.Feature.ID,
+			Branch:     config.Branch,
+			WorkDir:    config.WorkDir,
+			BaseCommit: config.BaseCommit,
+			Error:      task.ErrTaskCancelled.Error(),
+		}
+	}
 	if sess.Status == session.SessionFailed || sess.Status == session.SessionTimeout {
 		return &WorkerResult{
-			Session:   sess,
-			FeatureID: config.Feature.ID,
-			Branch:    config.Branch,
-			WorkDir:   config.WorkDir,
+			Session:    sess,
+			FeatureID:  config.Feature.ID,
+			Branch:     config.Branch,
+			WorkDir:    config.WorkDir,
 			BaseCommit: config.BaseCommit,
-			Error:     sess.Result.ErrorMessage,
+			Error:      sess.Result.ErrorMessage,
 		}
 	}
 
@@ -327,6 +358,11 @@ func (w *Worker) Run(config WorkerConfig) *WorkerResult {
 		ValidationOutput: validationOutput,
 		Success:          true,
 	}
+}
+
+func (w *Worker) isTaskCancelled(taskID string) bool {
+	stored, err := w.taskStore.Get(taskID)
+	return err == nil && stored.Status == task.StatusCancelled
 }
 
 // buildPrompt 构建 Worker Agent 的 prompt

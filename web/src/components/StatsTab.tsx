@@ -5,6 +5,7 @@ import {
 } from 'recharts';
 import { BarChart3 } from 'lucide-react';
 import { useTaskStore } from '../stores/taskStore';
+import { useWSStore } from '../stores/wsStore';
 import { api, type Session } from '../lib/api';
 
 interface TokenDataPoint {
@@ -28,10 +29,16 @@ interface DurationDataPoint {
 
 export function StatsTab() {
   const { tasks, activeTaskId } = useTaskStore();
+  const { events } = useWSStore();
   const [sessions, setSessions] = useState<Session[]>([]);
   const [loading, setLoading] = useState(false);
 
   const task = tasks.find((t) => t.id === activeTaskId);
+  const refreshKey = events.filter(
+    (event) =>
+      event.task_id === activeTaskId &&
+      (event.type === 'session_end' || event.type === 'task_status' || event.type === 'batch_update')
+  ).length;
 
   useEffect(() => {
     if (!activeTaskId) return;
@@ -41,7 +48,7 @@ export function StatsTab() {
       .then(setSessions)
       .catch(() => setSessions([]))
       .finally(() => setLoading(false));
-  }, [activeTaskId]);
+  }, [activeTaskId, refreshKey]);
 
   if (!task || !activeTaskId) return null;
 

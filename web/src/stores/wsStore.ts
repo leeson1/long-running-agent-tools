@@ -1,6 +1,7 @@
 import { create } from 'zustand';
-import { createWebSocket, type WSEvent } from '../lib/api';
+import { api, createWebSocket, type WSEvent } from '../lib/api';
 import { useConversationStore, type MessageRole } from './conversationStore';
+import { useTaskStore } from './taskStore';
 
 interface WSStore {
   connected: boolean;
@@ -12,12 +13,41 @@ interface WSStore {
   clearEvents: () => void;
 }
 
+const TASK_REFRESH_DELAY_MS = 150;
+const pendingTaskRefreshes = new Map<string, number>();
+
+function scheduleTaskRefresh(taskId: string) {
+  if (!taskId || pendingTaskRefreshes.has(taskId)) return;
+
+  const timer = window.setTimeout(async () => {
+    pendingTaskRefreshes.delete(taskId);
+    try {
+      const task = await api.getTask(taskId);
+      useTaskStore.getState().updateTaskInList(task);
+    } catch {
+      // 任务可能已被删除，忽略刷新失败
+    }
+  }, TASK_REFRESH_DELAY_MS);
+
+  pendingTaskRefreshes.set(taskId, timer);
+}
+
 /**
  * 将 WebSocket 事件路由到 conversationStore
  */
 function routeEventToConversation(event: WSEvent) {
   const convStore = useConversationStore.getState();
   const data = event.data || {};
+
+  switch (event.type) {
+    case 'task_status':
+    case 'feature_update':
+    case 'batch_update':
+      scheduleTaskRefresh(event.task_id);
+      break;
+    default:
+      break;
+  }
 
   switch (event.type) {
     case 'agent_message': {

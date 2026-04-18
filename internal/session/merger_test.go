@@ -134,6 +134,34 @@ func TestMerger_AutoResolveConflict_Success(t *testing.T) {
 	}
 }
 
+func TestMerger_AutoResolveConflict_FromExistingConflictState(t *testing.T) {
+	repoDir := initMergeTestRepo(t)
+	merger := NewMerger(repoDir)
+
+	os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("# Main\n"), 0644)
+	run(t, repoDir, "git", "add", ".")
+	run(t, repoDir, "git", "commit", "-m", "main change")
+
+	run(t, repoDir, "git", "checkout", "-b", "agentforge/task-1/F001", "HEAD~1")
+	os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("# Feature\n"), 0644)
+	run(t, repoDir, "git", "add", ".")
+	run(t, repoDir, "git", "commit", "-m", "feature change")
+	run(t, repoDir, "git", "checkout", "main")
+
+	mergeResult := merger.MergeBranch("agentforge/task-1/F001", "F001")
+	if !mergeResult.HasConflict {
+		t.Fatalf("Expected initial merge conflict, got %+v", mergeResult)
+	}
+
+	result := merger.AutoResolveConflict("agentforge/task-1/F001", "F001")
+	if !result.Success {
+		t.Fatalf("AutoResolve should succeed from active conflict state, got: %s", result.ErrorMessage)
+	}
+	if len(merger.GetRemainingConflicts()) != 0 {
+		t.Fatalf("Expected no remaining conflicts, got %v", merger.GetRemainingConflicts())
+	}
+}
+
 func TestMerger_AutoResolveConflict_NoConflict(t *testing.T) {
 	repoDir := initMergeTestRepo(t)
 	merger := NewMerger(repoDir)
